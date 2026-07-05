@@ -1,0 +1,21 @@
+{
+  "n_species": 14,
+  "n_records_total": 253101,
+  "n_records_median": 13268,
+  "year_range": "1950-2024",
+  "grid_km": 25,
+  "accessible_buffer_km": 150,
+  "median_spread_naive": 8.9,
+  "median_spread_rarefied": 4.4,
+  "median_spread_regional": 5.4,
+  "median_spread_listlength": 9.3,
+  "median_bias_ratio": 1.58,
+  "bias_cor_r": -0.29,
+  "bias_cor_ci": [-0.71, 0.28],
+  "bias_cor_p": 0.31,
+  "kendall_w": 0.68,
+  "agreement_rho_min": 0.25,
+  "agreement_rho_max": 0.88,
+  "fastest_species": "Pseudorasbora parva",
+  "generated": "2026-07-05"
+}

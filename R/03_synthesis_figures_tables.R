@@ -5,12 +5,13 @@
 #   Fig 1  occurrence density of study species across Europe
 #   Fig 2  sampling effort through time (the confound) + citizen-science share
 #   Fig 3  naive vs effort-corrected range curves per species
-#   Fig 4  spread velocity, naive vs rarefied, with 95% CI
+#   Fig 4  spread velocity, naive vs three correction methods, with 95% CI
 #   Fig 5  cross-species synthesis: bias ratio vs citizen-science share
+#   Fig 6  agreement among correction methods (robustness check)
 # Tables:
 #   Table 1  species, group, native region, n records, span, DOI
-#   Table 2  invasion-phase breakpoints (naive vs corrected)
-#   Table 3  spread rates (km/yr) with CIs
+#   Table 2  invasion-phase breakpoints (naive vs three correction methods)
+#   Table 3  spread rates (km/yr) with CIs, all four methods
 # Plus results_values.json  (numbers the manuscript template pulls in).
 # =============================================================================
 
@@ -99,22 +100,23 @@ fig3 <- ggplot2::ggplot(long[is.finite(value_s)],
 ggsave2("Fig3_range_curves.png", fig3, 11, 8)
 
 # =============================================================================
-# Figure 4 -- spread velocity naive vs rarefied (95% CI)
+# Figure 4 -- spread velocity across all four correction methods (95% CI)
 # =============================================================================
 sr <- data.table::as.data.table(rd$spread)
 sr[, species := factor(species, levels = sr[method == "naive"][order(rate_km_yr), species])]
+sr[, method := factor(method, levels = names(method_pal))]
 
 fig4 <- ggplot2::ggplot(sr, ggplot2::aes(rate_km_yr, species, colour = method)) +
   ggplot2::geom_errorbarh(ggplot2::aes(xmin = ci_lwr, xmax = ci_upr),
-                          height = 0.25, position = ggplot2::position_dodge(0.5)) +
-  ggplot2::geom_point(position = ggplot2::position_dodge(0.5), size = 2) +
-  ggplot2::scale_colour_manual(values = c(naive = "#D55E00", rarefied = "#0072B2"),
-                               name = "Estimate") +
+                          height = 0.25, position = ggplot2::position_dodge(0.6)) +
+  ggplot2::geom_point(position = ggplot2::position_dodge(0.6), size = 2) +
+  ggplot2::scale_colour_manual(values = method_pal, labels = method_lab, name = "Method") +
   theme_inv() +
   ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
   ggplot2::labs(x = expression("Radial spread rate (km yr"^-1*")"), y = NULL,
-                title = "Effort correction lowers estimated spread velocity")
-ggsave2("Fig4_spread_rates.png", fig4, 8, 6)
+                title = "Effort correction lowers estimated spread velocity",
+                subtitle = "Naive vs. three correction methods (rarefaction, accessible-area rarefaction, list-length model)")
+ggsave2("Fig4_spread_rates.png", fig4, 9, 6.5)
 
 # =============================================================================
 # Figure 5 -- bias ratio vs citizen-science share (synthesis)
@@ -133,6 +135,31 @@ fig5 <- ggplot2::ggplot(bias[is.finite(bias_ratio)],
                 y = "Bias ratio (naive / corrected spread rate)",
                 title = "Naive spread inflation scales with citizen-science share")
 ggsave2("Fig5_bias_synthesis.png", fig5, 7, 6)
+
+# =============================================================================
+# Figure 6 -- agreement among correction methods (robustness check)
+# =============================================================================
+agree_long <- data.table::melt(
+  bias[, .(species, group, rarefied, rarefied_regional, listlength, naive)],
+  id.vars = c("species", "group", "rarefied"),
+  measure.vars = c("rarefied_regional", "listlength", "naive"),
+  variable.name = "comparator", value.name = "rate_comparator")
+agree_long[, comparator := factor(comparator,
+  levels = c("rarefied_regional", "listlength", "naive"),
+  labels = c("Rarefied (accessible area)", "List-length model", "Naive"))]
+
+fig6 <- ggplot2::ggplot(agree_long[is.finite(rarefied) & is.finite(rate_comparator)],
+                        ggplot2::aes(rarefied, rate_comparator, colour = group)) +
+  ggplot2::geom_abline(slope = 1, intercept = 0, linetype = 2, colour = "grey60") +
+  ggplot2::geom_point(size = 2.5) +
+  ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
+  ggplot2::facet_wrap(~comparator, scales = "free") +
+  theme_inv() +
+  ggplot2::labs(x = expression("Spread rate, rarefied (continental), km yr"^-1),
+                y = expression("Spread rate, alternative method, km yr"^-1),
+                title = "Agreement among correction methods",
+                caption = "Dashed line = 1:1 agreement with the primary (continental rarefaction) estimate.")
+ggsave2("Fig6_method_agreement.png", fig6, 10, 4)
 
 # =============================================================================
 # Tables
@@ -166,18 +193,32 @@ readr::write_csv(table3, file.path(cfg$dir_tab, "Table3_spread.csv"))
 # =============================================================================
 med_naive <- stats::median(sr[method == "naive", rate_km_yr], na.rm = TRUE)
 med_rar   <- stats::median(sr[method == "rarefied", rate_km_yr], na.rm = TRUE)
+med_rarr  <- stats::median(sr[method == "rarefied_regional", rate_km_yr], na.rm = TRUE)
+med_ll    <- stats::median(sr[method == "listlength", rate_km_yr], na.rm = TRUE)
+
+# agreement among the three *corrected* methods (excludes naive)
+corrected_methods <- c("rarefied", "rarefied_regional", "listlength")
+ma_corrected <- dplyr::filter(rd$method_agreement,
+                              method_a %in% corrected_methods, method_b %in% corrected_methods)
+
 res_vals <- list(
   n_species          = nrow(sp_t),
   n_records_total    = sum(n_summary$n_records),
   n_records_median   = as.integer(stats::median(n_summary$n_records)),
   year_range         = paste(cfg$year_min, cfg$year_max, sep = "-"),
   grid_km            = cfg$cell_km,
-  median_spread_naive    = round(med_naive, 1),
-  median_spread_rarefied = round(med_rar, 1),
+  accessible_buffer_km    = cfg$accessible_buffer_km,
+  median_spread_naive     = round(med_naive, 1),
+  median_spread_rarefied  = round(med_rar, 1),
+  median_spread_regional  = round(med_rarr, 1),
+  median_spread_listlength= round(med_ll, 1),
   median_bias_ratio  = round(stats::median(bias$bias_ratio[is.finite(bias$bias_ratio)]), 2),
   bias_cor_r         = round(unname(rd$bias_test$estimate), 2),
   bias_cor_ci        = round(as.numeric(rd$bias_test$conf.int), 2),
   bias_cor_p         = signif(rd$bias_test$p.value, 2),
+  kendall_w              = round(rd$kendall_w, 2),
+  agreement_rho_min      = round(min(ma_corrected$rho, na.rm = TRUE), 2),
+  agreement_rho_max      = round(max(ma_corrected$rho, na.rm = TRUE), 2),
   fastest_species    = sr[method == "rarefied"][which.max(rate_km_yr), as.character(species)],
   generated          = as.character(Sys.Date())
 )

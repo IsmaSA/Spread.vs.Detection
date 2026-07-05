@@ -1,9 +1,9 @@
 # Directories
 .claude/
 manuscript/
-data/
-output/
+data/gbif_downloads
+#output/
 
 # Files
 .Renviron.template
-README.md
+#README.md

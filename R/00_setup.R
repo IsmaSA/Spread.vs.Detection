@@ -65,6 +65,12 @@ cfg <- list(
   rarefy_reps  = 200L,                    # bootstrap replicates
   rarefy_probs = c(0.025, 0.5, 0.975),    # CI + median
 
+  # accessible-area restriction for the regional rarefaction correction
+  # (sensu Barve et al. 2011): radius around ever-occupied focal cells used
+  # to define the species-specific effort denominator, instead of the whole
+  # continent. Km, not a hard biological limit -- checked in sensitivity.
+  accessible_buffer_km = 150,
+
   # basis-of-record types to keep (identification quality proxy)
   keep_basis   = c("HUMAN_OBSERVATION", "MACHINE_OBSERVATION",
                    "PRESERVED_SPECIMEN", "OBSERVATION", "OCCURRENCE"),
@@ -245,6 +251,78 @@ rarefied_aoo <- function(dt_focal, dt_target, years, quota,
   data.table::rbindlist(res)
 }
 
+#' Restrict a target-group point set to the "accessible area" around a focal
+#' species' realized range (sensu Barve et al. 2011): target-group cells whose
+#' centroid lies within `buffer_km` of ANY ever-occupied focal cell. Used as
+#' an alternative, species-specific effort denominator (vs. the whole
+#' continental target group) for the regional rarefaction correction.
+#' @param dt_focal  focal-species gridded points (has gx, gy from assign_grid)
+#' @param dt_target target-group gridded points (has gx, gy from assign_grid)
+#' @param cell_m    grid cell size in metres (must match assign_grid call)
+#' @param buffer_km buffer radius, km
+#' @return dt_target filtered to rows within the accessible area
+restrict_target_accessible <- function(dt_focal, dt_target, cell_m, buffer_km) {
+  occ <- unique(dt_focal[, .(gx, gy)])
+  if (nrow(occ) == 0L) return(dt_target[0])
+  occ_cx <- (occ$gx + 0.5) * cell_m
+  occ_cy <- (occ$gy + 0.5) * cell_m
+
+  tgt_cells <- unique(dt_target[, .(cell, gx, gy)])
+  tgt_cells[, `:=`(cx = (gx + 0.5) * cell_m, cy = (gy + 0.5) * cell_m)]
+  buffer_m <- buffer_km * 1000
+
+  # min distance from each target cell to the nearest ever-occupied focal cell
+  min_dist <- vapply(seq_len(nrow(tgt_cells)), function(i) {
+    min(sqrt((occ_cx - tgt_cells$cx[i])^2 + (occ_cy - tgt_cells$cy[i])^2))
+  }, numeric(1))
+  keep_cells <- tgt_cells$cell[min_dist <= buffer_m]
+  dt_target[cell %in% keep_cells]
+}
+
+#' Detection-corrected AOO via a list-length model (Szabo et al. 2010;
+#' Isaac et al. 2014). Treats each cell-year with >=1 target-group record as
+#' a "checklist" of length = number of target-group records (the recording
+#' effort in that cell-year), and models focal-species detection as a
+#' function of list length and year:
+#'   presence ~ log1p(list_length) + factor(year)
+#' Predicting at a fixed reference list length for every year removes the
+#' effect of rising effort, giving an occupancy-probability trend that is
+#' converted to cell units (probability x cells ever sampled) and forced
+#' non-decreasing (cummax), since AOO is a cumulative quantity by construction.
+#' @param dt_focal  focal-species gridded points (cell, year)
+#' @param dt_target target-group gridded points (cell, year)
+#' @param years     full evaluation year sequence
+#' @return data.table(year, ll_aoo)
+listlength_aoo <- function(dt_focal, dt_target, years) {
+  na_out <- data.table::data.table(year = years, ll_aoo = NA_real_)
+
+  tgt_yr <- dt_target[, .(list_length = .N), by = .(cell, year)]
+  foc_yr <- unique(dt_focal[, .(cell, year)])[, present := 1L]
+  chk <- merge(tgt_yr, foc_yr, by = c("cell", "year"), all.x = TRUE)
+  chk[is.na(present), present := 0L]
+  chk <- chk[year %in% years]
+
+  if (data.table::uniqueN(chk$year) < 5L || sum(chk$present) < 5L) return(na_out)
+
+  fit <- tryCatch(
+    stats::glm(present ~ log1p(list_length) + factor(year), data = chk,
+              family = stats::binomial()),
+    error = function(e) NULL)
+  if (is.null(fit)) return(na_out)
+
+  ref_ll  <- stats::median(chk$list_length)
+  eval_yr <- sort(unique(chk$year))
+  pred <- data.table::data.table(year = eval_yr, list_length = ref_ll)
+  pred[, prob := stats::predict(fit, newdata = pred, type = "response")]
+  n_cells_total <- data.table::uniqueN(chk$cell)
+  pred[, ll_aoo := cummax(prob * n_cells_total)]
+
+  out <- merge(data.table::data.table(year = years), pred[, .(year, ll_aoo)],
+              by = "year", all.x = TRUE)
+  out[, ll_aoo := data.table::nafill(ll_aoo, type = "locf")]
+  out[]
+}
+
 #' Radial spread rate (km/yr) via the diffusion approximation:
 #' sqrt(occupied area / pi) regressed on year over the expansion phase.
 #' @param aoo_dt data.table(year, aoo) with aoo = number of occupied cells
@@ -292,6 +370,13 @@ fit_gompertz <- function(aoo_dt) {
 # colourblind-safe palette for the taxonomic groups
 group_pal <- c(Mollusc = "#009E73", Crustacean = "#E69F00",
                Fish = "#0072B2", Plant = "#CC79A7")
+
+# colourblind-safe palette for the four spread-rate correction methods
+method_pal <- c(naive = "#D55E00", rarefied = "#0072B2",
+                rarefied_regional = "#009E73", listlength = "#CC79A7")
+method_lab <- c(naive = "Naive", rarefied = "Rarefied (continental)",
+               rarefied_regional = "Rarefied (accessible area)",
+               listlength = "List-length model")
 
 theme_inv <- function(base_size = 11) {
   ggplot2::theme_minimal(base_size = base_size) +

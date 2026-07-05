@@ -1,0 +1,15 @@
+species,group,target_taxon,target_rank,native_region,focal_key,target_key
+Dreissena polymorpha,Mollusc,Bivalvia,class,Ponto-Caspian,2287072,137
+Dreissena bugensis,Mollusc,Bivalvia,class,Ponto-Caspian,2287073,137
+Corbicula fluminea,Mollusc,Bivalvia,class,E/SE Asia,8190231,137
+Procambarus clarkii,Crustacean,Cambaridae,family,N/C America,2227300,4479
+Pacifastacus leniusculus,Crustacean,Astacidae,family,W North America,2226990,8022
+Faxonius limosus,Crustacean,Cambaridae,family,E North America,8909595,4479
+Dikerogammarus villosus,Crustacean,Amphipoda,order,Ponto-Caspian,4315705,1231
+Neogobius melanostomus,Fish,Perciformes,order,Ponto-Caspian,2379089,587
+Pseudorasbora parva,Fish,Cypriniformes,order,E Asia,2362868,1153
+Lepomis gibbosus,Fish,Perciformes,order,E North America,2394486,587
+Gambusia holbrooki,Fish,Cyprinodontiformes,order,SE North America,2350570,547
+Ameiurus melas,Fish,Siluriformes,order,E North America,2340977,708
+Elodea nuttallii,Plant,Hydrocharitaceae,family,North America,5329212,3721
+Ludwigia grandiflora,Plant,Onagraceae,family,S America,5421039,2430

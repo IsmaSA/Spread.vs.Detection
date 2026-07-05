@@ -1,14 +1,18 @@
 # =============================================================================
 # 02_range_dynamics.R  --  effort-corrected range-dynamics reconstruction
 #
-# For each species and grid resolution:
-#   * project to EPSG:3035, assign integer grid
-#   * naive cumulative AOO (first-detection cells)
-#   * sampled-cell footprint (target-group effort)
-#   * relative occupancy = AOO / sampled
-#   * effort-rarefied AOO (constant sample size)
-#   * invasion-phase breakpoints (segmented) on naive vs rarefied curves
-#   * radial spread rate (km/yr), naive vs rarefied, with 95% CI
+# For each species and grid resolution, reconstructs range dynamics under a
+# naive model and three independent correction methods:
+#   1. naive              cumulative AOO (first-detection cells)
+#   2. rarefied           effort-rarefied AOO, continental target-group pool
+#   3. rarefied_regional  effort-rarefied AOO, accessible-area-restricted pool
+#                         (Barve et al. 2011)
+#   4. listlength         list-length detection model (Isaac et al. 2014)
+# * project to EPSG:3035, assign integer grid
+# * sampled-cell footprint (target-group effort) + relative occupancy
+# * invasion-phase breakpoints (segmented) per method
+# * radial spread rate (km/yr) per method, with 95% CI
+# * cross-method agreement (pairwise Spearman rho; Kendall's W)
 # =============================================================================
 
 source("R/00_setup.R")
@@ -53,10 +57,35 @@ analyse_species <- function(sp, cell_km) {
                        c("rar_lwr", "rar_aoo", "rar_upr"))
   curve <- merge(curve, rar, by = "year", all.x = TRUE)
 
-  # phase detection on naive and rarefied curves
+  # ---- correction method 3: accessible-area-restricted rarefaction ---------
+  # same rarefaction machinery, but the effort denominator (target-group pool)
+  # is restricted to the species' accessible area (Barve et al. 2011) instead
+  # of the whole continent -- tests whether the *scope* of the effort
+  # denominator matters, holding the correction *procedure* fixed.
+  g_acc <- restrict_target_accessible(f, g, cell_m, cfg$accessible_buffer_km)
+  quota_acc <- if (nrow(g_acc) == 0L) quota else
+    as.integer(min(quota, stats::median(cumsum(
+      rbind(f[, .(year)], g_acc[, .(year)])[, .N, by = year][order(year)]$N))))
+  rar_acc <- rarefied_aoo(f, g_acc, years, quota = quota_acc,
+                          reps = cfg$rarefy_reps, probs = cfg$rarefy_probs)
+  data.table::setnames(rar_acc, c("lwr", "med", "upr"),
+                       c("rarr_lwr", "rarr_aoo", "rarr_upr"))
+  curve <- merge(curve, rar_acc, by = "year", all.x = TRUE)
+
+  # ---- correction method 4: list-length detection model ---------------------
+  # a different correction *paradigm* (detection-probability modelling of
+  # presence/absence vs. resampling to constant effort); Isaac et al. (2014).
+  ll <- listlength_aoo(f, g, years)
+  curve <- merge(curve, ll, by = "year", all.x = TRUE)
+
+  # phase detection per method
   ph_naive <- detect_phases(curve[, .(year, aoo)])
-  rar_curve <- curve[!is.na(rar_aoo), .(year, aoo = rar_aoo)]
-  ph_rar    <- detect_phases(rar_curve)
+  rar_curve  <- curve[!is.na(rar_aoo),  .(year, aoo = rar_aoo)]
+  rarr_curve <- curve[!is.na(rarr_aoo), .(year, aoo = rarr_aoo)]
+  ll_curve   <- curve[!is.na(ll_aoo),   .(year, aoo = ll_aoo)]
+  ph_rar  <- detect_phases(rar_curve)
+  ph_rarr <- detect_phases(rarr_curve)
+  ph_ll   <- detect_phases(ll_curve)
 
   # expansion window = between the two breakpoints (fallback to central 60%)
   win <- function(ph, dd) {
@@ -69,21 +98,30 @@ analyse_species <- function(sp, cell_km) {
   }
   w_naive <- win(ph_naive, curve[, .(year, aoo)])
   w_rar   <- win(ph_rar,   rar_curve)
+  w_rarr  <- win(ph_rarr,  rarr_curve)
+  w_ll    <- win(ph_ll,    ll_curve)
 
   sp_naive <- radial_spread(curve[, .(year, aoo)], cell_m, w_naive[1], w_naive[2])
-  sp_rar   <- radial_spread(rar_curve, cell_m, w_rar[1], w_rar[2])
+  sp_rar   <- radial_spread(rar_curve,  cell_m, w_rar[1],  w_rar[2])
+  sp_rarr  <- radial_spread(rarr_curve, cell_m, w_rarr[1], w_rarr[2])
+  sp_ll    <- radial_spread(ll_curve,   cell_m, w_ll[1],   w_ll[2])
 
   list(
-    species = sp, cell_km = cell_km, quota = quota, curve = curve,
-    phases = list(naive = ph_naive$breakpoints, rarefied = ph_rar$breakpoints),
+    species = sp, cell_km = cell_km, quota = quota, quota_accessible = quota_acc,
+    curve = curve,
+    phases = list(naive = ph_naive$breakpoints, rarefied = ph_rar$breakpoints,
+                 rarefied_regional = ph_rarr$breakpoints, listlength = ph_ll$breakpoints),
     spread = tibble::tibble(
       species  = sp, cell_km = cell_km,
-      method   = c("naive", "rarefied"),
-      rate_km_yr = c(sp_naive$rate_km_yr, sp_rar$rate_km_yr),
-      ci_lwr   = c(sp_naive$ci[1], sp_rar$ci[1]),
-      ci_upr   = c(sp_naive$ci[2], sp_rar$ci[2]),
-      lag_end  = c(sort(ph_naive$breakpoints)[1], sort(ph_rar$breakpoints)[1]),
-      sat_start= c(sort(ph_naive$breakpoints)[2], sort(ph_rar$breakpoints)[2])
+      method   = c("naive", "rarefied", "rarefied_regional", "listlength"),
+      rate_km_yr = c(sp_naive$rate_km_yr, sp_rar$rate_km_yr,
+                    sp_rarr$rate_km_yr, sp_ll$rate_km_yr),
+      ci_lwr   = c(sp_naive$ci[1], sp_rar$ci[1], sp_rarr$ci[1], sp_ll$ci[1]),
+      ci_upr   = c(sp_naive$ci[2], sp_rar$ci[2], sp_rarr$ci[2], sp_ll$ci[2]),
+      lag_end  = c(sort(ph_naive$breakpoints)[1], sort(ph_rar$breakpoints)[1],
+                  sort(ph_rarr$breakpoints)[1], sort(ph_ll$breakpoints)[1]),
+      sat_start= c(sort(ph_naive$breakpoints)[2], sort(ph_rar$breakpoints)[2],
+                  sort(ph_rarr$breakpoints)[2], sort(ph_ll$breakpoints)[2])
     )
   )
 }
@@ -115,6 +153,35 @@ bias_tbl <- dplyr::left_join(bias_tbl, cs_recent, by = "species")
 bias_ct <- with(bias_tbl[is.finite(bias_tbl$bias_ratio), ],
                 stats::cor.test(cs_frac_recent, bias_ratio, method = "pearson"))
 
+# ---- cross-method agreement (robustness to correction method) -------------
+# Pairwise Spearman correlations show how similarly any two methods rank
+# species by spread rate; Kendall's W summarizes overall concordance among
+# the three *corrected* methods (rarefied / rarefied_regional / listlength;
+# naive is the uncorrected baseline being tested, not a candidate correction)
+# -- i.e. whether conclusions about relative spread rate are robust to the
+# choice of correction procedure and effort-denominator scope.
+method_mat <- as.matrix(bias_tbl[, c("naive", "rarefied", "rarefied_regional", "listlength")])
+rownames(method_mat) <- bias_tbl$species
+
+pairwise_cor <- function(mat) {
+  utils::combn(colnames(mat), 2, function(pair) {
+    ok <- stats::complete.cases(mat[, pair])
+    ct <- suppressWarnings(stats::cor.test(mat[ok, pair[1]], mat[ok, pair[2]],
+                                           method = "spearman"))
+    tibble::tibble(method_a = pair[1], method_b = pair[2],
+                  rho = unname(ct$estimate), p_value = ct$p.value, n = sum(ok))
+  }, simplify = FALSE) |> dplyr::bind_rows()
+}
+method_agreement <- pairwise_cor(method_mat)
+
+corr_mat <- method_mat[, c("rarefied", "rarefied_regional", "listlength")]
+corr_mat <- corr_mat[stats::complete.cases(corr_mat), , drop = FALSE]
+ranks <- apply(corr_mat, 2, rank, ties.method = "average")
+n_kw <- nrow(ranks); m_kw <- ncol(ranks)
+Rj <- rowSums(ranks)
+S  <- sum((Rj - mean(Rj))^2)
+kendall_w <- if (n_kw >= 2L) (12 * S) / (m_kw^2 * (n_kw^3 - n_kw)) else NA_real_
+
 # ---- sensitivity across grid resolutions -----------------------------------
 res_sens <- purrr::map(cfg$cell_km_sens, function(ck) {
   purrr::map(species_tbl$species, analyse_species, cell_km = ck) |>
@@ -126,13 +193,16 @@ sens_all <- dplyr::bind_rows(
 )
 
 # ---- persist ---------------------------------------------------------------
-readr::write_csv(spread_all, file.path(cfg$dir_tab, "spread_rates.csv"))
-readr::write_csv(bias_tbl,   file.path(cfg$dir_tab, "bias_summary.csv"))
-readr::write_csv(sens_all,   file.path(cfg$dir_tab, "sensitivity_grid.csv"))
+readr::write_csv(spread_all,       file.path(cfg$dir_tab, "spread_rates.csv"))
+readr::write_csv(bias_tbl,         file.path(cfg$dir_tab, "bias_summary.csv"))
+readr::write_csv(sens_all,         file.path(cfg$dir_tab, "sensitivity_grid.csv"))
+readr::write_csv(method_agreement, file.path(cfg$dir_tab, "method_agreement.csv"))
 data.table::fwrite(curves_all, file.path(cfg$dir_tab, "range_curves.csv"))
 saveRDS(list(res = res_primary, curves = curves_all, spread = spread_all,
-             bias = bias_tbl, bias_test = bias_ct, sens = sens_all),
+             bias = bias_tbl, bias_test = bias_ct, sens = sens_all,
+             method_agreement = method_agreement, kendall_w = kendall_w),
         file.path(cfg$dir_data, "range_dynamics.rds"))
 
 message("Range dynamics complete | species x resolutions analysed | ",
-        "bias r = ", round(unname(bias_ct$estimate), 2))
+        "bias r = ", round(unname(bias_ct$estimate), 2),
+        " | Kendall's W (corrected methods) = ", round(kendall_w, 2))
