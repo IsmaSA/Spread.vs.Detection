@@ -27,6 +27,9 @@ ggsave2 <- function(f, p, w, h) ggplot2::ggsave(file.path(cfg$dir_fig, f), p,
 # =============================================================================
 # Figure 1 -- occurrence density across Europe
 # =============================================================================
+map_bbox <- sf::st_bbox(c(xmin = 2.5e6, xmax = 6e6, ymin = 1.5e6, ymax = 5.4e6),
+                        crs = cfg$crs_analysis)
+
 europe <- rnaturalearth::ne_countries(scale = "medium", continent = "Europe",
                                        returnclass = "sf") |>
   sf::st_transform(cfg$crs_analysis)
@@ -36,20 +39,42 @@ pts <- purrr::imap(occ$focal, ~ .x[, .(lon, lat)][, species := .y]) |>
   sf::st_as_sf(coords = c("lon", "lat"), crs = cfg$crs_geo) |>
   sf::st_transform(cfg$crs_analysis)
 pts <- dplyr::left_join(pts, dplyr::select(sp_t, species, group), by = "species")
+# randomize draw order across groups so no single group is systematically
+# overplotted on top of the others in the pooled panel (an easy-to-miss bias
+# when point layers are drawn in a fixed, data-order sequence)
+pts_pooled <- pts[sample.int(nrow(pts)), ]
 
-fig1 <- ggplot2::ggplot() +
+# ---- panel (a): all species pooled, coloured by taxonomic group -----------
+fig1a <- ggplot2::ggplot() +
   ggplot2::geom_sf(data = europe, fill = "grey96", colour = "grey80", linewidth = 0.2) +
-  ggplot2::geom_sf(data = pts, ggplot2::aes(colour = group), size = 0.25, alpha = 0.35) +
+  ggplot2::geom_sf(data = pts_pooled, ggplot2::aes(colour = group), size = 0.15, alpha = 0.3) +
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
   ggplot2::coord_sf(crs = sf::st_crs(cfg$crs_analysis),
-                    xlim = c(2.5e6, 6e6), ylim = c(1.5e6, 5.4e6)) +
+                    xlim = map_bbox[c("xmin", "xmax")], ylim = map_bbox[c("ymin", "ymax")]) +
   ggspatial::annotation_scale(location = "bl", height = grid::unit(0.15, "cm")) +
+  theme_inv(10) +
+  ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 3, alpha = 1))) +
+  ggplot2::labs(subtitle = "(a) All 14 species pooled, by taxonomic group")
+
+# ---- panel (b): faceted by species -----------------------------------------
+fig1b <- ggplot2::ggplot() +
+  ggplot2::geom_sf(data = europe, fill = "grey96", colour = "grey80", linewidth = 0.2) +
+  ggplot2::geom_sf(data = pts, ggplot2::aes(colour = group), size = 0.15, alpha = 0.35) +
+  ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
+  ggplot2::coord_sf(crs = sf::st_crs(cfg$crs_analysis),
+                    xlim = map_bbox[c("xmin", "xmax")], ylim = map_bbox[c("ymin", "ymax")]) +
   ggplot2::facet_wrap(~species, ncol = 4) +
   theme_inv(9) +
   ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 2, alpha = 1))) +
-  ggplot2::labs(title = "Cleaned GBIF occurrences of study invaders (1950-2024)",
-                caption = "ETRS89-LAEA (EPSG:3035). Points = individual records.")
-ggsave2("Fig1_occurrence_maps.png", fig1, 11, 9)
+  ggplot2::labs(subtitle = "(b) Faceted by species")
+
+fig1 <- patchwork::wrap_plots(fig1a, fig1b, ncol = 1, heights = c(0.3, 0.7)) +
+  patchwork::plot_layout(guides = "collect") +
+  patchwork::plot_annotation(
+    title = "Cleaned GBIF occurrences of study invaders (1950-2024)",
+    caption = "ETRS89-LAEA (EPSG:3035). Points = individual records.")
+
+ggsave2("Fig1_occurrence_maps.svg", fig1, 11, 13)
 
 # =============================================================================
 # Figure 2 -- sampling effort through time + citizen-science share
