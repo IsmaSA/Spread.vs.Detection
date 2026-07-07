@@ -55,7 +55,11 @@ cfg <- list(
   year_max     = 2024L,
   bin_years    = 1L,                      # temporal bin (annual)
 
-  # European bounding box for the GBIF download predicate (WGS84 degrees)
+  # Coarse bounding box for the GBIF download predicate (WGS84 degrees). This
+  # rectangle is deliberately loose -- it also covers Northern Africa and
+  # Turkiye/Asia Minor -- because GBIF download predicates only support
+  # simple geometry cheaply; the precise continental-Europe boundary is
+  # enforced afterwards in cleaning (see `europe_boundary()` / `restrict_to_europe()`).
   bbox         = c(lon_min = -25, lon_max = 45, lat_min = 34, lat_max = 72),
 
   # coordinate-uncertainty ceiling (m); records above this are dropped
@@ -182,6 +186,31 @@ gbif_key <- function(name, rank = "species", kingdom = NULL,
     message(sprintf("  GBIF: %-20s key=%-9s rank=%-11s conf=%s",
                     name, key, matched_rank, as.character(conf)))
   key
+}
+
+#' Precise continental-Europe boundary (dissolved country polygons), used to
+#' drop records that fall inside the coarse download bounding box (`cfg$bbox`)
+#' but outside the study region -- chiefly Northern Africa and Turkiye/Asia
+#' Minor. Natural Earth's continent classification puts Turkiye in Asia and
+#' Morocco/Algeria/Tunisia/Libya/Egypt in Africa, so filtering to
+#' continent == "Europe" excludes both without a manual country-code list.
+#' @return a single (multi)polygon sfc, WGS84 (EPSG:4326)
+europe_boundary <- function() {
+  rnaturalearth::ne_countries(scale = "medium", continent = "Europe",
+                              returnclass = "sf") |>
+    sf::st_make_valid() |>
+    sf::st_union()
+}
+
+#' Restrict a cleaned occurrence data.table (lon/lat in WGS84) to points
+#' falling within `europe_poly` (see `europe_boundary()`).
+#' @param dt data.table with columns lon, lat
+#' @param europe_poly sfc polygon, WGS84 (EPSG:4326)
+restrict_to_europe <- function(dt, europe_poly) {
+  if (nrow(dt) == 0L) return(dt)
+  pts <- sf::st_as_sf(dt, coords = c("lon", "lat"), crs = cfg$crs_geo, remove = FALSE)
+  inside <- lengths(sf::st_intersects(pts, europe_poly)) > 0
+  dt[inside]
 }
 
 #' Assign projected points to an integer grid (memory-efficient, no grid object).

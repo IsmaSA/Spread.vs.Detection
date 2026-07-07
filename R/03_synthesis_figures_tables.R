@@ -8,6 +8,7 @@
 #   Fig 4  spread velocity, naive vs three correction methods, with 95% CI
 #   Fig 5  cross-species synthesis: bias ratio vs citizen-science share
 #   Fig 6  agreement among correction methods (robustness check)
+#   Fig S2 leave-one-species-out sensitivity of the bias~CS correlation
 # Tables:
 #   Table 1  species, group, native region, n records, span, DOI
 #   Table 2  invasion-phase breakpoints (naive vs three correction methods)
@@ -25,7 +26,7 @@ ggsave2 <- function(f, p, w, h) ggplot2::ggsave(file.path(cfg$dir_fig, f), p,
                                                 width = w, height = h, dpi = 300)
 
 # =============================================================================
-# Figure 1 -- occurrence density across Europe
+# Figure 1 -- occupied grid cells across Europe
 # =============================================================================
 map_bbox <- sf::st_bbox(c(xmin = 2.5e6, xmax = 6e6, ymin = 1.5e6, ymax = 5.4e6),
                         crs = cfg$crs_analysis)
@@ -34,95 +35,138 @@ europe <- rnaturalearth::ne_countries(scale = "medium", continent = "Europe",
                                        returnclass = "sf") |>
   sf::st_transform(cfg$crs_analysis)
 
-pts <- purrr::imap(occ$focal, ~ .x[, .(lon, lat)][, species := .y]) |>
+# Occupied cells on the *same* grid used for the AOO analysis (cfg$cell_km),
+# rather than raw occurrence points -- this ties the figure directly to what
+# "area of occupancy" means in this paper, and plots at most a few thousand
+# cells instead of ~253k individual points (which previously needed
+# rasterising just to keep the SVG file size and element count manageable).
+cell_m  <- cfg$cell_km * 1000
+grid_sf <- purrr::imap(occ$focal, ~ .x[, .(lon, lat)][, species := .y]) |>
   data.table::rbindlist() |>
   sf::st_as_sf(coords = c("lon", "lat"), crs = cfg$crs_geo) |>
   sf::st_transform(cfg$crs_analysis)
-pts <- dplyr::left_join(pts, dplyr::select(sp_t, species, group), by = "species")
-# randomize draw order across groups so no single group is systematically
-# overplotted on top of the others in the pooled panel (an easy-to-miss bias
-# when point layers are drawn in a fixed, data-order sequence)
-pts_pooled <- pts[sample.int(nrow(pts)), ]
+xy <- sf::st_coordinates(grid_sf)
+grid_dt <- data.table::data.table(species = grid_sf$species, X = xy[, 1], Y = xy[, 2]) |>
+  assign_grid(cell_m)
+grid_dt <- dplyr::left_join(grid_dt, dplyr::select(sp_t, species, group), by = "species")
+grid_dt[, `:=`(cx = (gx + 0.5) * cell_m, cy = (gy + 0.5) * cell_m)]
 
-# ---- panel (a): all species pooled, coloured by taxonomic group -----------
+# panel (a): cells ever occupied by ANY species in a group, pooled across
+# species. Row order is randomized so overlapping group tiles (a cell
+# invaded by more than one group) don't systematically favour whichever
+# group happens to be drawn last.
+occ_group <- unique(grid_dt[, .(group, cx, cy)])
+occ_group <- occ_group[sample.int(nrow(occ_group)), ]
+
+# panel (b): cells occupied per species (no overlap within a facet panel).
+occ_species <- unique(grid_dt[, .(species, group, cx, cy)])
+
+# ---- panel (a): all species pooled, occupied cells by taxonomic group -----
 fig1a <- ggplot2::ggplot() +
   ggplot2::geom_sf(data = europe, fill = "grey96", colour = "grey80", linewidth = 0.2) +
-  ggplot2::geom_sf(data = pts_pooled, ggplot2::aes(colour = group), size = 0.15, alpha = 0.3) +
-  ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
+  ggplot2::geom_tile(data = occ_group, ggplot2::aes(cx, cy, fill = group),
+                     width = cell_m, height = cell_m, alpha = 0.6) +
+  ggplot2::scale_fill_manual(values = group_pal, name = "Group") +
   ggplot2::coord_sf(crs = sf::st_crs(cfg$crs_analysis),
                     xlim = map_bbox[c("xmin", "xmax")], ylim = map_bbox[c("ymin", "ymax")]) +
   ggspatial::annotation_scale(location = "bl", height = grid::unit(0.15, "cm")) +
   theme_inv(10) +
-  ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 3, alpha = 1))) +
-  ggplot2::labs(subtitle = "(a) All 14 species pooled, by taxonomic group")
+  ggplot2::labs(subtitle = "(a) All 14 species pooled, occupied cells by taxonomic group")
 
-# ---- panel (b): faceted by species -----------------------------------------
+# ---- panel (b): occupied cells faceted by species --------------------------
 fig1b <- ggplot2::ggplot() +
-  ggplot2::geom_sf(data = europe, fill = "grey96", colour = "grey80", linewidth = 0.2) +
-  ggplot2::geom_sf(data = pts, ggplot2::aes(colour = group), size = 0.15, alpha = 0.35) +
-  ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
+  ggplot2::geom_sf(data = europe, fill = "grey76", colour = "grey80", linewidth = 0.2) +
+  ggplot2::geom_tile(data = occ_species, ggplot2::aes(cx, cy, fill = group),
+                     width = cell_m, height = cell_m, alpha = 0.85) +
+  ggplot2::scale_fill_manual(values = group_pal, name = "Group") +
   ggplot2::coord_sf(crs = sf::st_crs(cfg$crs_analysis),
                     xlim = map_bbox[c("xmin", "xmax")], ylim = map_bbox[c("ymin", "ymax")]) +
   ggplot2::facet_wrap(~species, ncol = 4) +
   theme_inv(9) +
-  ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 2, alpha = 1))) +
-  ggplot2::labs(subtitle = "(b) Faceted by species")
+  ggplot2::theme(strip.text = ggplot2::element_text(size = 14, face = "italic"))
 
 fig1 <- patchwork::wrap_plots(fig1a, fig1b, ncol = 1, heights = c(0.3, 0.7)) +
   patchwork::plot_layout(guides = "collect") +
   patchwork::plot_annotation(
-    title = "Cleaned GBIF occurrences of study invaders (1950-2024)",
-    caption = "ETRS89-LAEA (EPSG:3035). Points = individual records.")
+    title = paste0("Cells occupied by study invaders (", cfg$cell_km, " km grid; 1950-2024)"),
+    caption = "ETRS89-LAEA (EPSG:3035). A cell is shaded if the species/group was recorded there at least once.")
 
-ggsave2("Fig1_occurrence_maps.svg", fig1, 11, 13)
+ggsave2("Fig1_occurrence_maps.svg", fig1b, 11, 13)
 
 # =============================================================================
 # Figure 2 -- sampling effort through time + citizen-science share
 # =============================================================================
 effort_ts <- curves[, .(sampled = max(sampled, na.rm = TRUE)), by = .(species, year)]
 cs <- data.table::fread(file.path(cfg$dir_tab, "citizen_science_share.csv"))
+x_breaks <- seq(1950, 2025, by = 20)
+xx_breaks <- seq(1990, 2025, by = 10)
 
-p2a <- ggplot2::ggplot(effort_ts, ggplot2::aes(year, sampled, group = species)) +
-  ggplot2::geom_line(alpha = 0.5, colour = "#0072B2") +
+p2a <- ggplot2::ggplot(effort_ts, ggplot2::aes(year, sampled, colour = species)) +
+  ggplot2::geom_line(alpha = 0.85, linewidth = 0.6) +
   ggplot2::scale_y_log10() +
-  theme_inv() +
-  ggplot2::labs(x = NULL, y = "Cumulative sampled cells\n(target-group footprint, log)",
-                subtitle = "(a) Sampling-effort footprint accumulates over time")
+  ggplot2::scale_colour_viridis_d(name = "Species") +
+  theme_inv() + theme_bw() +  ggplot2::scale_x_continuous(
+    limits = c(1950, 2025),
+    breaks = x_breaks
+  ) + ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12),
+    legend.position = "right",
+    legend.text = ggplot2::element_text(face = "italic", size = 8),
+    legend.title = ggplot2::element_text(size = 9),
+    legend.key.height = grid::unit(0.4, "cm")
+  ) +
+  ggplot2::labs(x = NULL, y = "Cumulative sampled cells\n(log-scale)")
 
 p2b <- ggplot2::ggplot(cs[year >= 1990], ggplot2::aes(year, cs_frac, group = species)) +
   ggplot2::geom_line(alpha = 0.4, colour = "#CC79A7") +
   ggplot2::geom_smooth(ggplot2::aes(group = 1), method = "loess",
                        se = TRUE, colour = "#7B3294", linewidth = 1) +
   ggplot2::scale_y_continuous(labels = scales::percent) +
-  theme_inv() +
-  ggplot2::labs(x = "Year", y = "Citizen-science share\nof annual records",
-                subtitle = "(b) Rising share of citizen-science (iNaturalist) records")
+  theme_inv() + theme_bw() +  ggplot2::scale_x_continuous(
+    limits = c(1990, 2025),
+    breaks = xx_breaks
+  ) +  ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12)
+  ) + 
+  ggplot2::labs(x = "Year", y = "Citizen-science share\nof annual records")
 
 fig2 <- patchwork::wrap_plots(p2a, p2b, ncol = 1)
-ggsave2("Fig2_sampling_effort.png", fig2, 7, 7)
+ggsave2("Fig2_sampling_effort.svg", fig2, 7, 7)
 
 # =============================================================================
-# Figure 3 -- naive vs effort-corrected range curves
+# Figure 3 -- naive vs all three effort-corrected range curves
 # =============================================================================
-long <- curves[, .(species, year, Naive = aoo, `Relative occupancy` = rel_occ)] |>
+# Same four series as Fig. 4/Table 3 (naive + the three corrections actually
+# used for spread-rate estimation), not the separate relative-occupancy
+# diagnostic (rel_occ is never converted into a spread-rate estimate; see
+# 02_range_dynamics.R). This keeps Fig. 3 consistent with what the rest of
+# the paper compares, rather than illustrating a fourth, unrelated metric.
+long <- curves[, .(species, year, naive = aoo, rarefied = rar_aoo,
+                   rarefied_regional = rarr_aoo, listlength = ll_aoo)] |>
   data.table::melt(id.vars = c("species", "year"),
-                   variable.name = "metric", value.name = "value")
-# rescale each metric to 0-1 within species for comparability of shape
-long[, value_s := value / max(value, na.rm = TRUE), by = .(species, metric)]
+                   variable.name = "method", value.name = "value")
+# rescale each curve to 0-1 within species for comparability of shape
+long[, value_s := value / max(value, na.rm = TRUE), by = .(species, method)]
+long[, method := factor(method, levels = names(method_pal))]
 
 fig3 <- ggplot2::ggplot(long[is.finite(value_s)],
-                        ggplot2::aes(year, value_s, colour = metric)) +
-  ggplot2::geom_line(linewidth = 0.7, na.rm = TRUE) +
-  ggplot2::scale_colour_manual(values = c("Naive" = "#D55E00",
-                                          "Relative occupancy" = "#0072B2"),
-                               name = NULL) +
+                        ggplot2::aes(year, value_s, colour = method)) +
+  ggplot2::geom_line(linewidth = 0.6, alpha = 0.85, na.rm = TRUE) +
+  ggplot2::scale_colour_manual(values = method_pal, labels = method_lab, name = "Method") +
   ggplot2::facet_wrap(~species, ncol = 4, scales = "free_x") +
-  theme_inv(9) +
-  ggplot2::labs(x = "Year", y = "Range metric (scaled 0-1 within species)",
-                title = "Naive range accumulation vs effort-corrected occupancy",
-                caption = paste("Naive = cumulative first-detection cells;",
-                                "Relative occupancy = occupied / sampled cells."))
-ggsave2("Fig3_range_curves.png", fig3, 11, 8)
+  theme_inv(9) +  theme_bw() +
+  ggplot2::theme(strip.text = ggplot2::element_text(size = 12, face = "italic")) +
+  ggplot2::labs(x = "Year", y = "Range metric (scaled 0-1 within species)") +  ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12)
+  )  +  ggplot2::scale_x_continuous(
+    limits = c(1950, 2025),
+    breaks = x_breaks
+  ) 
+
+ggsave2("Fig3_range_curves.svg", fig3, 11, 8)
 
 # =============================================================================
 # Figure 4 -- spread velocity across all four correction methods (95% CI)
@@ -136,12 +180,14 @@ fig4 <- ggplot2::ggplot(sr, ggplot2::aes(rate_km_yr, species, colour = method)) 
                           height = 0.25, position = ggplot2::position_dodge(0.6)) +
   ggplot2::geom_point(position = ggplot2::position_dodge(0.6), size = 2) +
   ggplot2::scale_colour_manual(values = method_pal, labels = method_lab, name = "Method") +
-  theme_inv() +
+  theme_inv() + theme_bw() +  
+ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12)
+  ) +
   ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
-  ggplot2::labs(x = expression("Radial spread rate (km yr"^-1*")"), y = NULL,
-                title = "Effort correction lowers estimated spread velocity",
-                subtitle = "Naive vs. three correction methods (rarefaction, accessible-area rarefaction, list-length model)")
-ggsave2("Fig4_spread_rates.png", fig4, 9, 6.5)
+  ggplot2::labs(x = expression("Radial spread rate (km yr"^-1*")"), y = NULL)
+ggsave2("Fig4_spread_rates.svg", fig4, 9, 6.5)
 
 # =============================================================================
 # Figure 5 -- bias ratio vs citizen-science share (synthesis)
@@ -155,36 +201,66 @@ fig5 <- ggplot2::ggplot(bias[is.finite(bias_ratio)],
   ggplot2::geom_point(size = 3) +
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
   ggplot2::scale_x_continuous(labels = scales::percent) +
-  theme_inv() +
+  theme_inv() + theme_bw() + 
+     ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12)
+  ) +
   ggplot2::labs(x = "Recent citizen-science share (2010-2024)",
-                y = "Bias ratio (naive / corrected spread rate)",
-                title = "Naive spread inflation scales with citizen-science share")
-ggsave2("Fig5_bias_synthesis.png", fig5, 7, 6)
+                y = "Bias ratio (naive / corrected spread rate)")
+ggsave2("Fig5_bias_synthesis.svg", fig5, 7, 6)
 
 # =============================================================================
-# Figure 6 -- agreement among correction methods (robustness check)
+# Figure 6 -- pairwise agreement among the three effort corrections
+# (robustness check; naive is deliberately excluded -- it is the baseline
+# being tested, not a candidate correction; see Figs. 4-5 for its bias)
 # =============================================================================
-agree_long <- data.table::melt(
-  bias[, .(species, group, rarefied, rarefied_regional, listlength, naive)],
-  id.vars = c("species", "group", "rarefied"),
-  measure.vars = c("rarefied_regional", "listlength", "naive"),
-  variable.name = "comparator", value.name = "rate_comparator")
-agree_long[, comparator := factor(comparator,
-  levels = c("rarefied_regional", "listlength", "naive"),
-  labels = c("Rarefied (accessible area)", "List-length model", "Naive"))]
+corrected_methods <- c("rarefied", "rarefied_regional", "listlength")
+method_pairs <- utils::combn(corrected_methods, 2, simplify = FALSE)
 
-fig6 <- ggplot2::ggplot(agree_long[is.finite(rarefied) & is.finite(rate_comparator)],
-                        ggplot2::aes(rarefied, rate_comparator, colour = group)) +
+agree_long <- purrr::map_dfr(method_pairs, function(p) {
+  data.table::data.table(
+    species = bias$species, group = bias$group,
+    rate_a = bias[[p[1]]], rate_b = bias[[p[2]]],
+    pair = paste(method_lab[p[1]], "vs", method_lab[p[2]]))
+})
+agree_long <- data.table::as.data.table(agree_long)
+agree_long[, pair := factor(pair, levels = unique(pair))]
+
+fig6 <- ggplot2::ggplot(agree_long[is.finite(rate_a) & is.finite(rate_b)],
+                        ggplot2::aes(rate_a, rate_b, colour = group)) +
   ggplot2::geom_abline(slope = 1, intercept = 0, linetype = 2, colour = "grey60") +
   ggplot2::geom_point(size = 2.5) +
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
-  ggplot2::facet_wrap(~comparator, scales = "free") +
+  ggplot2::facet_wrap(~pair, scales = "free", ncol = 3) +
+  theme_inv() + theme_bw() +   ggplot2::theme(
+    axis.title = ggplot2::element_text(size = 12),
+    axis.text = ggplot2::element_text(size = 12)
+  ) +
+  ggplot2::labs(x = expression("Spread rate, method A (km yr"^-1*")"),
+                y = expression("Spread rate, method B (km yr"^-1*")"))
+ggsave2("Fig6_method_agreement.svg", fig6, 12, 4.5)
+
+# =============================================================================
+# Figure S2 -- leave-one-species-out sensitivity of the bias~CS correlation
+# =============================================================================
+jk <- data.table::as.data.table(rd$jackknife_bias_cor)
+full_r <- unname(rd$bias_test$estimate)
+jk[, species_dropped := factor(species_dropped, levels = jk[order(r), species_dropped])]
+
+figS2 <- ggplot2::ggplot(jk, ggplot2::aes(r, species_dropped)) +
+  ggplot2::geom_vline(xintercept = full_r, linetype = 2, colour = "#D55E00") +
+  ggplot2::geom_vline(xintercept = 0, linetype = 3, colour = "grey60") +
+  ggplot2::geom_errorbarh(ggplot2::aes(xmin = ci_lwr, xmax = ci_upr), height = 0.2) +
+  ggplot2::geom_point(size = 2, colour = "#0072B2") +
   theme_inv() +
-  ggplot2::labs(x = expression("Spread rate, rarefied (continental), km yr"^-1),
-                y = expression("Spread rate, alternative method, km yr"^-1),
-                title = "Agreement among correction methods",
-                caption = "Dashed line = 1:1 agreement with the primary (continental rarefaction) estimate.")
-ggsave2("Fig6_method_agreement.png", fig6, 10, 4)
+  ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
+  ggplot2::labs(x = expression("Pearson "*italic(r)*" (bias ratio ~ citizen-science share)"),
+                y = "Species excluded",
+                title = "Leave-one-species-out sensitivity of the bias-citizen-science correlation",
+                caption = paste0("Dashed line = full-sample estimate (r = ", round(full_r, 2),
+                                 "); dotted line = zero."))
+ggsave2("FigS2_jackknife_bias_cor.svg", figS2, 7, 6)
 
 # =============================================================================
 # Tables
@@ -226,6 +302,10 @@ corrected_methods <- c("rarefied", "rarefied_regional", "listlength")
 ma_corrected <- dplyr::filter(rd$method_agreement,
                               method_a %in% corrected_methods, method_b %in% corrected_methods)
 
+# leave-one-species-out sensitivity of the bias~citizen-science correlation
+jkc <- rd$jackknife_bias_cor
+jk_r_drop <- function(sp) round(jkc$r[jkc$species_dropped == sp], 2)
+
 res_vals <- list(
   n_species          = nrow(sp_t),
   n_records_total    = sum(n_summary$n_records),
@@ -244,6 +324,11 @@ res_vals <- list(
   kendall_w              = round(rd$kendall_w, 2),
   agreement_rho_min      = round(min(ma_corrected$rho, na.rm = TRUE), 2),
   agreement_rho_max      = round(max(ma_corrected$rho, na.rm = TRUE), 2),
+  jackknife_r_min             = round(min(jkc$r), 2),
+  jackknife_r_max             = round(max(jkc$r), 2),
+  jackknife_p_min             = signif(min(jkc$p_value), 2),
+  jackknife_r_drop_dbugensis  = jk_r_drop("Dreissena bugensis"),
+  jackknife_r_drop_amelas     = jk_r_drop("Ameiurus melas"),
   fastest_species    = sr[method == "rarefied"][which.max(rate_km_yr), as.character(species)],
   generated          = as.character(Sys.Date())
 )

@@ -99,6 +99,8 @@ are biased" is robust to the choice of correction rather than an artefact of one
 | `⟨median_bias_ratio⟩`                                | `results_values.json` / `bias_summary.csv` |
 | `⟨bias_cor_r⟩`, `⟨bias_cor_ci⟩`, `⟨bias_cor_p⟩`     | `results_values.json` |
 | `⟨kendall_w⟩`, `⟨agreement_rho_min⟩`, `⟨agreement_rho_max⟩` | `results_values.json` / `method_agreement.csv` |
+| `⟨jackknife_r_min⟩`, `⟨jackknife_r_max⟩`, `⟨jackknife_p_min⟩` | `results_values.json` / `jackknife_bias_cor.csv` |
+| `⟨jackknife_r_drop_dbugensis⟩`, `⟨jackknife_r_drop_amelas⟩` | `results_values.json` / `jackknife_bias_cor.csv` |
 | `⟨fastest_species⟩`                                  | `results_values.json` |
 | lag-end / saturation-onset values                    | `Table2_phases.csv` |
 | per-species spread + CIs                             | `Table3_spread.csv` / Fig. 4 |
@@ -129,8 +131,8 @@ are biased" is robust to the choice of correction rather than an artefact of one
 - Run it, then send me `results_values.json` + the figures and I'll (a) fill the Results
   prose, (b) tighten the Discussion validation paragraphs against the real numbers, and
   (c) convert the manuscript to **.docx** or a **parameterized .Rmd** that auto-populates.
-- Optional rigor upgrades: dynamic occupancy models (`unmarked`), the reference Frescalo
+- Optional rigor upgrades: dynamic occupancy models (`unmarked`) and the reference Frescalo
   implementation (`sparta`, benchmarked against a full community matrix rather than a
-  single target-group ratio), and a leave-one-species-out check on the
-  bias~citizen-science relationship.
+  single target-group ratio) remain heavier alternatives beyond the three corrections and
+  the leave-one-species-out jackknife already implemented.
 ```

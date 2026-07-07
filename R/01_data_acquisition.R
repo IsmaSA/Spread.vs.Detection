@@ -96,13 +96,20 @@ target_raw <- purrr::map2(
 # ---- 4. coordinate cleaning (CoordinateCleaner) ----------------------------
 # Freshwater taxa may occur legitimately close to the coast, so cc_sea() is NOT
 # applied. We flag capitals, centroids, institutions, GBIF HQ, zeros, equal
-# lat/lon, and enforce the coordinate-uncertainty ceiling.
+# lat/lon, and enforce the coordinate-uncertainty ceiling. The download bbox
+# (cfg$bbox) is a coarse rectangle that also covers Northern Africa and
+# Turkiye/Asia Minor; restrict_to_europe() enforces the true study region
+# (continental Europe) precisely, using a dissolved Natural Earth boundary
+# computed once and reused across species.
+europe_poly <- europe_boundary()
+
 clean_occ <- function(dt) {
   dt <- dt[!is.na(lat) & !is.na(lon) & !is.na(year)]
   dt <- dt[basisOfRecord %in% cfg$keep_basis]
   dt <- dt[is.na(coordinateUncertaintyInMeters) |
              coordinateUncertaintyInMeters <= cfg$coord_unc_max]
   dt <- unique(dt, by = c("lat", "lon", "year", "species"))
+  dt <- restrict_to_europe(dt, europe_poly)
   df <- as.data.frame(dt)
   flags <- CoordinateCleaner::clean_coordinates(
     x = df, lon = "lon", lat = "lat",

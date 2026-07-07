@@ -153,6 +153,22 @@ bias_tbl <- dplyr::left_join(bias_tbl, cs_recent, by = "species")
 bias_ct <- with(bias_tbl[is.finite(bias_tbl$bias_ratio), ],
                 stats::cor.test(cs_frac_recent, bias_ratio, method = "pearson"))
 
+# ---- leave-one-species-out sensitivity of the bias~citizen-science test ---
+# The correlation above uses only 14 points and is visibly influenced by a
+# couple of high-leverage species (see Fig. 5 / Results 3.4); this jackknife
+# quantifies how much r, its CI, and its P-value shift under each
+# single-species exclusion, rather than leaving that as a visual impression.
+bias_cor_dt <- bias_tbl[is.finite(bias_tbl$bias_ratio) & is.finite(bias_tbl$cs_frac_recent), ]
+jackknife_bias_cor <- purrr::map_dfr(bias_cor_dt$species, function(sp_drop) {
+  d  <- bias_cor_dt[bias_cor_dt$species != sp_drop, ]
+  ct <- suppressWarnings(stats::cor.test(d$cs_frac_recent, d$bias_ratio, method = "pearson"))
+  tibble::tibble(species_dropped = sp_drop,
+                 r       = unname(ct$estimate),
+                 ci_lwr  = ct$conf.int[1],
+                 ci_upr  = ct$conf.int[2],
+                 p_value = ct$p.value)
+})
+
 # ---- cross-method agreement (robustness to correction method) -------------
 # Pairwise Spearman correlations show how similarly any two methods rank
 # species by spread rate; Kendall's W summarizes overall concordance among
@@ -193,14 +209,16 @@ sens_all <- dplyr::bind_rows(
 )
 
 # ---- persist ---------------------------------------------------------------
-readr::write_csv(spread_all,       file.path(cfg$dir_tab, "spread_rates.csv"))
-readr::write_csv(bias_tbl,         file.path(cfg$dir_tab, "bias_summary.csv"))
-readr::write_csv(sens_all,         file.path(cfg$dir_tab, "sensitivity_grid.csv"))
-readr::write_csv(method_agreement, file.path(cfg$dir_tab, "method_agreement.csv"))
+readr::write_csv(spread_all,         file.path(cfg$dir_tab, "spread_rates.csv"))
+readr::write_csv(bias_tbl,           file.path(cfg$dir_tab, "bias_summary.csv"))
+readr::write_csv(sens_all,           file.path(cfg$dir_tab, "sensitivity_grid.csv"))
+readr::write_csv(method_agreement,   file.path(cfg$dir_tab, "method_agreement.csv"))
+readr::write_csv(jackknife_bias_cor, file.path(cfg$dir_tab, "jackknife_bias_cor.csv"))
 data.table::fwrite(curves_all, file.path(cfg$dir_tab, "range_curves.csv"))
 saveRDS(list(res = res_primary, curves = curves_all, spread = spread_all,
              bias = bias_tbl, bias_test = bias_ct, sens = sens_all,
-             method_agreement = method_agreement, kendall_w = kendall_w),
+             method_agreement = method_agreement, kendall_w = kendall_w,
+             jackknife_bias_cor = jackknife_bias_cor),
         file.path(cfg$dir_data, "range_dynamics.rds"))
 
 message("Range dynamics complete | species x resolutions analysed | ",
