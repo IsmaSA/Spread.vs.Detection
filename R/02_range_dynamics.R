@@ -137,11 +137,32 @@ spread_all <- purrr::map(res_primary, "spread") |> dplyr::bind_rows() |>
   dplyr::left_join(dplyr::select(species_tbl, species, group, native_region),
                    by = "species")
 
-# ---- bias magnitude: naive vs rarefied recent expansion --------------------
+# ---- bias magnitude: naive vs each of the three corrections ---------------
+# bias_ratio (naive/rarefied) is the headline metric used throughout the
+# Results narrative and Table 3; bias_ratio_regional and bias_ratio_listlength
+# repeat the same construction against the other two corrections, so the
+# "does naive overestimate spread, and does that scale with citizen-science
+# reliance" claim can be checked independently of which correction is used
+# as the denominator (not just whether the three corrections agree with each
+# other on absolute spread rate, which is the separate §2.6/Fig. 6 question).
+# A ratio is only meaningful if its denominator is distinguishable from zero.
+# The list-length model in particular can return a fitted rate of ~1e-15
+# km/yr (floating-point residue from lm() on an almost perfectly flat
+# cumulative-maximum curve, not a genuine near-zero spread rate) for species
+# where it detects no year trend; dividing by that produces a "finite" but
+# numerically meaningless ratio in the 1e14-1e15 range rather than an error,
+# which would silently corrupt any correlation computed on it. Ratios with
+# |denominator| below `eps` are set to NA instead.
+safe_ratio <- function(num, denom, eps = 0.05) ifelse(abs(denom) < eps, NA_real_, num / denom)
+
 bias_tbl <- spread_all |>
   dplyr::select(species, group, method, rate_km_yr) |>
   tidyr::pivot_wider(names_from = method, values_from = rate_km_yr) |>
-  dplyr::mutate(bias_ratio = naive / rarefied)
+  dplyr::mutate(
+    bias_ratio            = safe_ratio(naive, rarefied),
+    bias_ratio_regional   = safe_ratio(naive, rarefied_regional),
+    bias_ratio_listlength = safe_ratio(naive, listlength)
+  )
 
 # join mean citizen-science share (post-2010) to test the bias~CS hypothesis
 cs <- data.table::fread(file.path(cfg$dir_tab, "citizen_science_share.csv"))
@@ -149,25 +170,41 @@ cs_recent <- cs[year >= 2010, .(cs_frac_recent = mean(cs_frac, na.rm = TRUE)),
                 by = species]
 bias_tbl <- dplyr::left_join(bias_tbl, cs_recent, by = "species")
 
-# correlation test (report r + 95% CI, not just p)
-bias_ct <- with(bias_tbl[is.finite(bias_tbl$bias_ratio), ],
-                stats::cor.test(cs_frac_recent, bias_ratio, method = "pearson"))
+# correlation test (report r + 95% CI, not just p), one per bias-ratio
+# definition; bias_ct is the headline (continental rarefaction) test used
+# in the Abstract/Results narrative, the other two are the added checks.
+bias_cs_cor <- function(ratio_col) {
+  d <- bias_tbl[is.finite(bias_tbl[[ratio_col]]) & is.finite(bias_tbl$cs_frac_recent), ]
+  stats::cor.test(d$cs_frac_recent, d[[ratio_col]], method = "pearson")
+}
+bias_ct            <- bias_cs_cor("bias_ratio")
+bias_ct_regional   <- bias_cs_cor("bias_ratio_regional")
+bias_ct_listlength <- bias_cs_cor("bias_ratio_listlength")
 
 # ---- leave-one-species-out sensitivity of the bias~citizen-science test ---
 # The correlation above uses only 14 points and is visibly influenced by a
 # couple of high-leverage species (see Fig. 5 / Results 3.4); this jackknife
 # quantifies how much r, its CI, and its P-value shift under each
 # single-species exclusion, rather than leaving that as a visual impression.
-bias_cor_dt <- bias_tbl[is.finite(bias_tbl$bias_ratio) & is.finite(bias_tbl$cs_frac_recent), ]
-jackknife_bias_cor <- purrr::map_dfr(bias_cor_dt$species, function(sp_drop) {
-  d  <- bias_cor_dt[bias_cor_dt$species != sp_drop, ]
-  ct <- suppressWarnings(stats::cor.test(d$cs_frac_recent, d$bias_ratio, method = "pearson"))
-  tibble::tibble(species_dropped = sp_drop,
-                 r       = unname(ct$estimate),
-                 ci_lwr  = ct$conf.int[1],
-                 ci_upr  = ct$conf.int[2],
-                 p_value = ct$p.value)
-})
+# Repeated for all three bias-ratio definitions and combined into one long
+# table (column `method`) rather than three separate objects.
+jackknife_one <- function(ratio_col) {
+  d <- bias_tbl[is.finite(bias_tbl[[ratio_col]]) & is.finite(bias_tbl$cs_frac_recent), ]
+  purrr::map_dfr(d$species, function(sp_drop) {
+    dd <- d[d$species != sp_drop, ]
+    ct <- suppressWarnings(stats::cor.test(dd$cs_frac_recent, dd[[ratio_col]], method = "pearson"))
+    tibble::tibble(species_dropped = sp_drop,
+                   r       = unname(ct$estimate),
+                   ci_lwr  = ct$conf.int[1],
+                   ci_upr  = ct$conf.int[2],
+                   p_value = ct$p.value)
+  })
+}
+jackknife_bias_cor <- dplyr::bind_rows(
+  dplyr::mutate(jackknife_one("bias_ratio"),            method = "rarefied"),
+  dplyr::mutate(jackknife_one("bias_ratio_regional"),   method = "rarefied_regional"),
+  dplyr::mutate(jackknife_one("bias_ratio_listlength"), method = "listlength")
+)
 
 # ---- cross-method agreement (robustness to correction method) -------------
 # Pairwise Spearman correlations show how similarly any two methods rank
@@ -216,7 +253,10 @@ readr::write_csv(method_agreement,   file.path(cfg$dir_tab, "method_agreement.cs
 readr::write_csv(jackknife_bias_cor, file.path(cfg$dir_tab, "jackknife_bias_cor.csv"))
 data.table::fwrite(curves_all, file.path(cfg$dir_tab, "range_curves.csv"))
 saveRDS(list(res = res_primary, curves = curves_all, spread = spread_all,
-             bias = bias_tbl, bias_test = bias_ct, sens = sens_all,
+             bias = bias_tbl, bias_test = bias_ct,
+             bias_test_regional = bias_ct_regional,
+             bias_test_listlength = bias_ct_listlength,
+             sens = sens_all,
              method_agreement = method_agreement, kendall_w = kendall_w,
              jackknife_bias_cor = jackknife_bias_cor),
         file.path(cfg$dir_data, "range_dynamics.rds"))

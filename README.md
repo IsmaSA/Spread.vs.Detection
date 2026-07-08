@@ -98,9 +98,19 @@ are biased" is robust to the choice of correction rather than an artefact of one
 | `⟨median_spread_regional⟩`, `⟨median_spread_listlength⟩` | `results_values.json` / `Table3_spread.csv` |
 | `⟨median_bias_ratio⟩`                                | `results_values.json` / `bias_summary.csv` |
 | `⟨bias_cor_r⟩`, `⟨bias_cor_ci⟩`, `⟨bias_cor_p⟩`     | `results_values.json` |
+| `⟨bias_cor_r_regional⟩`, `⟨bias_cor_p_regional⟩`, `⟨bias_cor_r_listlength⟩`, `⟨bias_cor_p_listlength⟩` | `results_values.json` / `bias_summary.csv` (`bias_ratio_regional`/`bias_ratio_listlength` columns) |
 | `⟨kendall_w⟩`, `⟨agreement_rho_min⟩`, `⟨agreement_rho_max⟩` | `results_values.json` / `method_agreement.csv` |
-| `⟨jackknife_r_min⟩`, `⟨jackknife_r_max⟩`, `⟨jackknife_p_min⟩` | `results_values.json` / `jackknife_bias_cor.csv` |
-| `⟨jackknife_r_drop_dbugensis⟩`, `⟨jackknife_r_drop_amelas⟩` | `results_values.json` / `jackknife_bias_cor.csv` |
+| `⟨jackknife_r_min⟩`, `⟨jackknife_r_max⟩`, `⟨jackknife_p_min⟩` | `results_values.json` / `jackknife_bias_cor.csv` (method == "rarefied") |
+| `⟨jackknife_r_drop_dbugensis⟩`, `⟨jackknife_r_drop_amelas⟩` | `results_values.json` / `jackknife_bias_cor.csv` (method == "rarefied") |
+| `⟨jackknife_r_min_regional⟩`, `⟨jackknife_r_max_regional⟩`, `⟨jackknife_r_min_listlength⟩`, `⟨jackknife_r_max_listlength⟩` | `results_values.json` / `jackknife_bias_cor.csv` |
+
+Note: `bias_ratio_*` columns use `safe_ratio()` (`02_range_dynamics.R`), which returns `NA`
+when `|denominator| < 0.05` km/yr instead of dividing by a numerically negligible rate. The
+list-length model's fitted rate is essentially zero for several species (not a genuine
+near-zero spread rate, but floating-point residue from `lm()` on an almost-flat curve), so
+`bias_ratio_listlength` / its correlation and jackknife are only defined for 7 of 14 species,
+and those 7 exclude every species with a citizen-science share above ~12% — treat that
+specific check as underpowered and range-restricted, not as a confirmatory third replicate.
 | `⟨fastest_species⟩`                                  | `results_values.json` |
 | lag-end / saturation-onset values                    | `Table2_phases.csv` |
 | per-species spread + CIs                             | `Table3_spread.csv` / Fig. 4 |

@@ -21,3 +21,5 @@ source("R/03_synthesis_figures_tables.R")    # figures, tables, results_values.j
 message("\nDONE in ", round(difftime(Sys.time(), t0, units = "mins"), 1),
         " min. Outputs in output/. Populate manuscript from ",
         "output/results_values.json and output/tables/.")
+
+install.packages(c("rlang", "vctrs", "pillar", "tibble", "dplyr", "tidyr", "purrr"), dependencies = TRUE)

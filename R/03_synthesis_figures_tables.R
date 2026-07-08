@@ -190,25 +190,53 @@ ggplot2::theme(
 ggsave2("Fig4_spread_rates.svg", fig4, 9, 6.5)
 
 # =============================================================================
-# Figure 5 -- bias ratio vs citizen-science share (synthesis)
+# Figure 5 -- bias ratio vs citizen-science share, all three corrections
 # =============================================================================
+# The naive/rarefied ratio is the headline metric (Results 3.4), but the
+# "does the bias scale with citizen-science reliance" test is repeated
+# against all three corrections so the finding doesn't hinge on which
+# correction is used as the denominator (cf. Fig. 6, which checks whether
+# the corrections agree with each other on absolute spread rate).
+options(scipen =9999)
+
 bias <- data.table::as.data.table(rd$bias)
-fig5 <- ggplot2::ggplot(bias[is.finite(bias_ratio)],
-                        ggplot2::aes(cs_frac_recent, bias_ratio, colour = group)) +
+bias_long <- data.table::melt(
+  bias[, .(species, group, cs_frac_recent, bias_ratio, bias_ratio_regional, bias_ratio_listlength)],
+  id.vars = c("species", "group", "cs_frac_recent"),
+  measure.vars = c("bias_ratio", "bias_ratio_regional", "bias_ratio_listlength"),
+  variable.name = "method", value.name = "ratio")
+bias_long[, method := factor(method,
+  levels = c("bias_ratio", "bias_ratio_regional", "bias_ratio_listlength"),
+  labels = c(method_lab[["rarefied"]], method_lab[["rarefied_regional"]], method_lab[["listlength"]]))]
+
+# species with an undefined ratio (near-zero or NA denominator; safe_ratio()
+# in 02_range_dynamics.R) have no meaningful y-position -- shown as rug ticks
+# on the x-axis instead of being silently dropped, so it's visible *who* is
+# missing from each panel and *where* they'd sit on the citizen-science axis.
+bias_missing <- bias_long[!is.finite(ratio)]
+bias_long <- bias_long[bias_long$stability !="Unstable (near-zero denominator)",]
+
+fig5 <- ggplot2::ggplot(bias_long[is.finite(ratio)],
+                        ggplot2::aes(cs_frac_recent, ratio, colour = group)) +
   ggplot2::geom_hline(yintercept = 1, linetype = 2, colour = "grey60") +
   ggplot2::geom_smooth(ggplot2::aes(group = 1), method = "lm", se = TRUE,
                        colour = "grey30", linewidth = 0.7) +
   ggplot2::geom_point(size = 3) +
+  ggplot2::geom_rug(data = bias_missing, ggplot2::aes(x = cs_frac_recent, colour = group),
+                    sides = "b", inherit.aes = FALSE, length = grid::unit(0.06, "npc"),
+                    linewidth = 0.8, show.legend = FALSE) +
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
   ggplot2::scale_x_continuous(labels = scales::percent) +
-  theme_inv() + theme_bw() + 
+  ggplot2::facet_wrap(~method, scales = "free_y") +
+  theme_inv() + theme_bw() +
      ggplot2::theme(
     axis.title = ggplot2::element_text(size = 12),
     axis.text = ggplot2::element_text(size = 12)
   ) +
   ggplot2::labs(x = "Recent citizen-science share (2010-2024)",
-                y = "Bias ratio (naive / corrected spread rate)")
-ggsave2("Fig5_bias_synthesis.svg", fig5, 7, 6)
+                y = "Bias ratio (naive / corrected spread rate)",
+                caption = "Tick marks on the x-axis = species with an undefined ratio (near-zero or NA denominator); shown at their citizen-science share only, since their ratio has no meaningful y-position.")
+ggsave2("Fig5_bias_synthesis.svg", fig5, 13, 5)
 
 # =============================================================================
 # Figure 6 -- pairwise agreement among the three effort corrections
@@ -242,25 +270,42 @@ fig6 <- ggplot2::ggplot(agree_long[is.finite(rate_a) & is.finite(rate_b)],
 ggsave2("Fig6_method_agreement.svg", fig6, 12, 4.5)
 
 # =============================================================================
-# Figure S2 -- leave-one-species-out sensitivity of the bias~CS correlation
+# Figure S2 -- leave-one-species-out sensitivity, rarefaction-based corrections
 # =============================================================================
+# The list-length version is omitted here: after excluding near-zero-
+# denominator ratios (see bias_tbl / safe_ratio() in 02_range_dynamics.R),
+# only 7 of 14 species retain a defined list-length-based bias ratio, and
+# those 7 exclude every species with a citizen-science share above ~12% --
+# too few and too range-restricted to jackknife informatively (Fig. 5 shows
+# it as a scatter instead).
 jk <- data.table::as.data.table(rd$jackknife_bias_cor)
-full_r <- unname(rd$bias_test$estimate)
-jk[, species_dropped := factor(species_dropped, levels = jk[order(r), species_dropped])]
+jk <- jk[method %in% c("rarefied", "rarefied_regional")]
+jk[, method := factor(method, levels = c("rarefied", "rarefied_regional"),
+                      labels = method_lab[c("rarefied", "rarefied_regional")])]
+# order species consistently across panels (by the headline/rarefied result)
+order_levels <- jk[method == method_lab[["rarefied"]]][order(r), species_dropped]
+jk[, species_dropped := factor(species_dropped, levels = order_levels)]
+
+full_r_dt <- data.table::data.table(
+  method = factor(method_lab[c("rarefied", "rarefied_regional")],
+                  levels = levels(jk$method)),
+  full_r = c(unname(rd$bias_test$estimate),
+            unname(rd$bias_test_regional$estimate)))
 
 figS2 <- ggplot2::ggplot(jk, ggplot2::aes(r, species_dropped)) +
-  ggplot2::geom_vline(xintercept = full_r, linetype = 2, colour = "#D55E00") +
+  ggplot2::geom_vline(data = full_r_dt, ggplot2::aes(xintercept = full_r),
+                      linetype = 2, colour = "#D55E00") +
   ggplot2::geom_vline(xintercept = 0, linetype = 3, colour = "grey60") +
   ggplot2::geom_errorbarh(ggplot2::aes(xmin = ci_lwr, xmax = ci_upr), height = 0.2) +
   ggplot2::geom_point(size = 2, colour = "#0072B2") +
+  ggplot2::facet_wrap(~method, scales = "free_x") +
   theme_inv() +
   ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
   ggplot2::labs(x = expression("Pearson "*italic(r)*" (bias ratio ~ citizen-science share)"),
                 y = "Species excluded",
-                title = "Leave-one-species-out sensitivity of the bias-citizen-science correlation",
-                caption = paste0("Dashed line = full-sample estimate (r = ", round(full_r, 2),
-                                 "); dotted line = zero."))
-ggsave2("FigS2_jackknife_bias_cor.svg", figS2, 7, 6)
+                title = "Leave-one-species-out sensitivity, rarefaction-based corrections",
+                caption = "Dashed line = full-sample estimate for that correction; dotted line = zero.")
+ggsave2("FigS2_jackknife_bias_cor.svg", figS2, 9, 6)
 
 # =============================================================================
 # Tables
@@ -303,7 +348,12 @@ ma_corrected <- dplyr::filter(rd$method_agreement,
                               method_a %in% corrected_methods, method_b %in% corrected_methods)
 
 # leave-one-species-out sensitivity of the bias~citizen-science correlation
-jkc <- rd$jackknife_bias_cor
+# (jkc = headline/continental-rarefaction jackknife, used throughout Results
+# 3.4; jkc_regional/jkc_listlength are the added checks for the other two
+# corrections, summarized only by their r range, not per-species detail)
+jkc            <- dplyr::filter(rd$jackknife_bias_cor, method == "rarefied")
+jkc_regional   <- dplyr::filter(rd$jackknife_bias_cor, method == "rarefied_regional")
+jkc_listlength <- dplyr::filter(rd$jackknife_bias_cor, method == "listlength")
 jk_r_drop <- function(sp) round(jkc$r[jkc$species_dropped == sp], 2)
 
 res_vals <- list(
@@ -321,6 +371,10 @@ res_vals <- list(
   bias_cor_r         = round(unname(rd$bias_test$estimate), 2),
   bias_cor_ci        = round(as.numeric(rd$bias_test$conf.int), 2),
   bias_cor_p         = signif(rd$bias_test$p.value, 2),
+  bias_cor_r_regional    = round(unname(rd$bias_test_regional$estimate), 2),
+  bias_cor_p_regional    = signif(rd$bias_test_regional$p.value, 2),
+  bias_cor_r_listlength  = round(unname(rd$bias_test_listlength$estimate), 2),
+  bias_cor_p_listlength  = signif(rd$bias_test_listlength$p.value, 2),
   kendall_w              = round(rd$kendall_w, 2),
   agreement_rho_min      = round(min(ma_corrected$rho, na.rm = TRUE), 2),
   agreement_rho_max      = round(max(ma_corrected$rho, na.rm = TRUE), 2),
@@ -329,6 +383,10 @@ res_vals <- list(
   jackknife_p_min             = signif(min(jkc$p_value), 2),
   jackknife_r_drop_dbugensis  = jk_r_drop("Dreissena bugensis"),
   jackknife_r_drop_amelas     = jk_r_drop("Ameiurus melas"),
+  jackknife_r_min_regional    = round(min(jkc_regional$r), 2),
+  jackknife_r_max_regional    = round(max(jkc_regional$r), 2),
+  jackknife_r_min_listlength  = round(min(jkc_listlength$r), 2),
+  jackknife_r_max_listlength  = round(max(jkc_listlength$r), 2),
   fastest_species    = sr[method == "rarefied"][which.max(rate_km_yr), as.character(species)],
   generated          = as.character(Sys.Date())
 )
