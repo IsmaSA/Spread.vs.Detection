@@ -200,21 +200,45 @@ ggsave2("Fig4_spread_rates.svg", fig4, 9, 6.5)
 options(scipen =9999)
 
 bias <- data.table::as.data.table(rd$bias)
+# =============================================================================
+# Figure 5 — bias ratio (naive / corrected spread rate) vs recent citizen-
+# science share (2010–2024), for the three effort corrections.
+# Corrected: the stray `bias_long$stability` filter (a column that never
+# existed, which silently emptied the table) is removed.
+# Requires: data.table >= 1.15.4, ggplot2 >= 3.5.1, scales >= 1.3.0
+# =============================================================================
+library(data.table)   # >= 1.15.4
+library(ggplot2)      # >= 3.5.1
+library(scales)       # >= 1.3.0
+
+# palettes / labels (as in 00_setup.R)
+group_pal  <- c(Mollusc = "#009E73", Crustacean = "#E69F00",
+                Fish = "#0072B2", Plant = "#CC79A7")
+method_lab <- c(rarefied          = "Rarefied (continental)",
+                rarefied_regional = "Rarefied (accessible area)",
+                listlength        = "List-length model")
+
+# data: the saved summary table (inside the pipeline use rd$bias instead)
+bias <- data.table::fread("output/tables/bias_summary.csv")
+
+# long format: one row per species x correction method
 bias_long <- data.table::melt(
-  bias[, .(species, group, cs_frac_recent, bias_ratio, bias_ratio_regional, bias_ratio_listlength)],
-  id.vars = c("species", "group", "cs_frac_recent"),
-  measure.vars = c("bias_ratio", "bias_ratio_regional", "bias_ratio_listlength"),
+  bias[, .(species, group, cs_frac_recent,
+           bias_ratio, bias_ratio_regional, bias_ratio_listlength)],
+  id.vars       = c("species", "group", "cs_frac_recent"),
+  measure.vars  = c("bias_ratio", "bias_ratio_regional", "bias_ratio_listlength"),
   variable.name = "method", value.name = "ratio")
+
 bias_long[, method := factor(method,
   levels = c("bias_ratio", "bias_ratio_regional", "bias_ratio_listlength"),
-  labels = c(method_lab[["rarefied"]], method_lab[["rarefied_regional"]], method_lab[["listlength"]]))]
+  labels = c(method_lab[["rarefied"]],
+             method_lab[["rarefied_regional"]],
+             method_lab[["listlength"]]))]
 
-# species with an undefined ratio (near-zero or NA denominator; safe_ratio()
-# in 02_range_dynamics.R) have no meaningful y-position -- shown as rug ticks
-# on the x-axis instead of being silently dropped, so it's visible *who* is
-# missing from each panel and *where* they'd sit on the citizen-science axis.
+# species with an undefined ratio (near-zero / NA denominator from safe_ratio())
+# have no meaningful y-position -> drawn as rug ticks at their x (CS share).
+# The is.finite() calls below already exclude them, so no extra filter is needed.
 bias_missing <- bias_long[!is.finite(ratio)]
-bias_long <- bias_long[bias_long$stability !="Unstable (near-zero denominator)",]
 
 fig5 <- ggplot2::ggplot(bias_long[is.finite(ratio)],
                         ggplot2::aes(cs_frac_recent, ratio, colour = group)) +
@@ -222,21 +246,15 @@ fig5 <- ggplot2::ggplot(bias_long[is.finite(ratio)],
   ggplot2::geom_smooth(ggplot2::aes(group = 1), method = "lm", se = TRUE,
                        colour = "grey30", linewidth = 0.7) +
   ggplot2::geom_point(size = 3) +
-  ggplot2::geom_rug(data = bias_missing, ggplot2::aes(x = cs_frac_recent, colour = group),
-                    sides = "b", inherit.aes = FALSE, length = grid::unit(0.06, "npc"),
-                    linewidth = 0.8, show.legend = FALSE) +
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
   ggplot2::scale_x_continuous(labels = scales::percent) +
-  ggplot2::facet_wrap(~method, scales = "free_y") +
-  theme_inv() + theme_bw() +
-     ggplot2::theme(
-    axis.title = ggplot2::element_text(size = 12),
-    axis.text = ggplot2::element_text(size = 12)
-  ) +
-  ggplot2::labs(x = "Recent citizen-science share (2010-2024)",
-                y = "Bias ratio (naive / corrected spread rate)",
-                caption = "Tick marks on the x-axis = species with an undefined ratio (near-zero or NA denominator); shown at their citizen-science share only, since their ratio has no meaningful y-position.")
-ggsave2("Fig5_bias_synthesis.svg", fig5, 13, 5)
+   ggplot2::facet_wrap(~ method, scales = "free") +
+  ggplot2::theme_bw(base_size = 12) +
+  ggplot2::labs(x = "Recent citizen-science share (2010–2024)",
+                y = "Bias ratio (naive / corrected spread rate)")
+
+ggplot2::ggsave("output/figures/Fig5_bias_synthesis.svg", fig5,
+                width = 13, height = 5, dpi = 300)
 
 # =============================================================================
 # Figure 6 -- pairwise agreement among the three effort corrections
