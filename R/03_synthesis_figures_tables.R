@@ -262,12 +262,12 @@ fig6 <- ggplot2::ggplot(agree_long[is.finite(rate_a) & is.finite(rate_b)],
   ggplot2::scale_colour_manual(values = group_pal, name = "Group") +
   ggplot2::facet_wrap(~pair, scales = "free", ncol = 3) +
   theme_inv() + theme_bw() +   ggplot2::theme(
-    axis.title = ggplot2::element_text(size = 12),
-    axis.text = ggplot2::element_text(size = 12)
-  ) +
+    axis.title = ggplot2::element_text(size = 14),
+    axis.text = ggplot2::element_text(size = 15)
+  ) + ggplot2::theme(strip.text = ggplot2::element_text(size = 12)) + 
   ggplot2::labs(x = expression("Spread rate, method A (km yr"^-1*")"),
                 y = expression("Spread rate, method B (km yr"^-1*")"))
-ggsave2("Fig6_method_agreement.svg", fig6, 12, 4.5)
+ggsave2("Fig6_method_agreement.svg", fig6, 15, 4.5)
 
 # =============================================================================
 # Figure S2 -- leave-one-species-out sensitivity, rarefaction-based corrections
@@ -299,12 +299,9 @@ figS2 <- ggplot2::ggplot(jk, ggplot2::aes(r, species_dropped)) +
   ggplot2::geom_errorbarh(ggplot2::aes(xmin = ci_lwr, xmax = ci_upr), height = 0.2) +
   ggplot2::geom_point(size = 2, colour = "#0072B2") +
   ggplot2::facet_wrap(~method, scales = "free_x") +
-  theme_inv() +
-  ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
+  theme_inv() + theme_bw()+  ggplot2::theme(axis.text.y = ggplot2::element_text(face = "italic")) +
   ggplot2::labs(x = expression("Pearson "*italic(r)*" (bias ratio ~ citizen-science share)"),
-                y = "Species excluded",
-                title = "Leave-one-species-out sensitivity, rarefaction-based corrections",
-                caption = "Dashed line = full-sample estimate for that correction; dotted line = zero.")
+                y = "Species excluded")
 ggsave2("FigS2_jackknife_bias_cor.svg", figS2, 9, 6)
 
 # =============================================================================
