@@ -1,9 +1,0 @@
-# Directories
-.claude/
-manuscript/
-data/
-output/
-
-# Files
-.Renviron.template
-README.md
