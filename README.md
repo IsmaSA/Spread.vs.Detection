@@ -31,16 +31,3 @@ Steps 02 to 04 can be split over several processes, e.g. `Rscript R/02_rates.R 1
 
 `R/functions.R` holds the methods (gridding, rarefaction, list-length model, breakpoint search and spread rates). Seeds are set in each script. Steps 02-04 take about 4-5 h on a single core; the slowest runs are those of *Ludwigia grandiflora* (Onagraceae, 2.2 million target-group records). The tables and figures in `output/` are those reported in the paper.
 
-## Outputs and the paper
-
-| Paper | File |
-|---|---|
-| Table 1 (records used) | `occurrences.csv` |
-| Table S2 | `tableS2_rates_phases.csv` |
-| Table S3 | `tableS3_simulation.csv` |
-| Table S4 | `tableS4_grid.csv` |
-| Table S5 | `tableS5_sensitivity.csv` |
-| Spread rates and phases, all grids | `spread_rates.csv`, `phases.csv` |
-| Medians, Wilcoxon tests, interval overlap | `median_rates.csv`, `wilcoxon.csv`, `interval_overlap.csv` |
-| Agreement and correlations | `method_agreement.csv`, `correlations.csv`, `jackknife.csv` |
-| Figures 1-6, S1-S5 | `output/figures/fig*.png` |
